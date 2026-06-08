@@ -105,9 +105,12 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     // ── Ripples (animated expanding rings) ───────────────────────────────────
     @Volatile private var ripples: List<RippleSpec> = emptyList()
 
-    // ── Volcanoes (bundled Holocene set; rendered as orange triangles) ───────
-    @Volatile private var volcanoes: List<com.quakesphere.globe.Volcano> = emptyList()
-    @Volatile private var volcanoPositions: List<FloatArray> = emptyList()
+    // ── Volcanoes (bundled Holocene set; rendered as small 3D cones) ─────────
+    // Populated by GlobeView synchronously before the GL surface even exists,
+    // so we never need to load on the GL thread (and the consumer can read
+    // the count immediately for header text etc).
+    @Volatile var volcanoes: List<com.quakesphere.globe.Volcano> = emptyList()
+    @Volatile var volcanoPositions: List<FloatArray> = emptyList()
 
     // ── Settings ─────────────────────────────────────────────────────────────
     @Volatile var showContinentLines = true
@@ -353,7 +356,8 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         setupStarField()
         setupContinents()
         setupTectonicPlates()
-        setupVolcanoes()
+        // Volcanoes are loaded by GlobeView before the GL surface comes up,
+        // so the data is already on `volcanoes` / `volcanoPositions` by here.
         // Heatmap is built on a background thread; the texture upload happens
         // in onDrawFrame when the pixels are ready. See [maybeUploadHeatmap].
         startHeatmapBuild()
@@ -531,18 +535,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         plateLineBuffer = ByteBuffer.allocateDirect(verts.size * 4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()
             .apply { put(verts); position(0) }
-    }
-
-    /**
-     * Load the bundled Holocene volcanoes once. Tiny dataset (~70 entries)
-     * so we can parse on the GL thread without noticeably delaying first
-     * frame. Positions are pre-computed on the unit sphere; per-frame we
-     * just project them with mvMatrix to draw billboard triangles.
-     */
-    private fun setupVolcanoes() {
-        val entries = VolcanoesLoader.load(appContext)
-        volcanoes        = entries.map { it.volcano }
-        volcanoPositions = entries.map { it.pos }
     }
 
     /**
@@ -812,88 +804,122 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     }
 
     /**
-     * Draw each volcano as a small camera-facing filled triangle with a
-     * dark outline edge for contrast. Filled (GL_TRIANGLES) rather than
-     * outline-only (GL_LINES) because glLineWidth > 1 is unreliable on
-     * GLES 2.0 drivers — most clamp to 1 px and an outline-only triangle
-     * disappears against busy marker layers. Triangles are still flat /
-     * 2D — they billboard to face the camera.
+     * Draw each volcano as a small 3D cone (3-sided pyramid) sticking out
+     * of the globe's surface along the local normal. Per-face shading is
+     * computed CPU-side from a fixed view-light direction so the cones
+     * read as 3D even though we're using a flat-color shader: the face
+     * pointing toward the light is bright orange, the back faces darker.
      *
-     * Backface cull: skip any volcano whose surface normal faces away from
-     * the camera so we don't draw triangles "through" the globe on the far
-     * side. Same trick markers use.
+     * Cone geometry per volcano:
+     *   - base: 3 verts on the tangent plane at pos, on a small circle of
+     *     radius BASE_R around the surface normal
+     *   - apex: pos + n * HEIGHT
+     *   - 3 side triangles (b_i, b_(i+1), apex)
+     *
+     * Cost: ~70 volcanoes × 3 faces = 210 tiny draw calls. Fine — the
+     * marker layer already does similar numbers and there's no GPU
+     * pressure at this scale.
      */
     private fun drawVolcanoes() {
         val positions = volcanoPositions
         if (positions.isEmpty()) return
 
-        // Right / up in model space (billboard the triangle so it faces the camera).
-        val right = floatArrayOf(mvMatrix[0], mvMatrix[4], mvMatrix[8])
-        val up    = floatArrayOf(mvMatrix[1], mvMatrix[5], mvMatrix[9])
-        // Sized larger than magnitude markers (which use ~0.045 base) so the
-        // triangles read clearly on a crowded globe.
-        val size  = 0.060f
+        // Small enough to not clutter a busy hemisphere; tall enough to read
+        // as a mountain rather than a triangle.
+        val baseRadius = 0.013f
+        val height     = 0.030f
 
-        // No explicit backface cull — we rely on the depth buffer instead.
-        // Volcanoes sit at radius 1.012, the sphere mesh at 1.0; far-hemisphere
-        // volcanoes are behind the sphere in world Z so glDepthTest (GL_LESS)
-        // discards them. Early-culling here would be a tiny perf win (~35 of
-        // 70 verts skipped) but isn't worth the complexity / bug surface.
-
-        // Build fill (3 verts/triangle) and edge (6 verts/triangle for outline) buffers.
-        val fillVerts = ArrayList<Float>(positions.size * 9)
-        val edgeVerts = ArrayList<Float>(positions.size * 18)
-        for (pos in positions) {
-            val tx = pos[0] + up[0] * size
-            val ty = pos[1] + up[1] * size
-            val tz = pos[2] + up[2] * size
-            val blx = pos[0] + (-right[0] - up[0] * 0.5f) * size
-            val bly = pos[1] + (-right[1] - up[1] * 0.5f) * size
-            val blz = pos[2] + (-right[2] - up[2] * 0.5f) * size
-            val brx = pos[0] + ( right[0] - up[0] * 0.5f) * size
-            val bry = pos[1] + ( right[1] - up[1] * 0.5f) * size
-            val brz = pos[2] + ( right[2] - up[2] * 0.5f) * size
-
-            // Filled triangle (CCW from camera POV).
-            fillVerts.add(tx); fillVerts.add(ty); fillVerts.add(tz)
-            fillVerts.add(blx); fillVerts.add(bly); fillVerts.add(blz)
-            fillVerts.add(brx); fillVerts.add(bry); fillVerts.add(brz)
-
-            // Outline edges (3 segments).
-            edgeVerts.add(tx);  edgeVerts.add(ty);  edgeVerts.add(tz);  edgeVerts.add(brx); edgeVerts.add(bry); edgeVerts.add(brz)
-            edgeVerts.add(brx); edgeVerts.add(bry); edgeVerts.add(brz); edgeVerts.add(blx); edgeVerts.add(bly); edgeVerts.add(blz)
-            edgeVerts.add(blx); edgeVerts.add(bly); edgeVerts.add(blz); edgeVerts.add(tx);  edgeVerts.add(ty);  edgeVerts.add(tz)
-        }
-        if (fillVerts.isEmpty()) return
+        // Fixed light direction in *world* space (matches diffuse light used
+        // by continent fills). The visible hemisphere is therefore always lit.
+        val viewLight  = computeViewLightDirection()           // world space
+        val invModel   = FloatArray(16).also { Matrix.invertM(it, 0, modelMatrix, 0) }
+        val lightModel = normalize3(transformDir(invModel, viewLight))
 
         GLES20.glUseProgram(lineProgram)
         val posH   = GLES20.glGetAttribLocation(lineProgram,  "aPosition")
         val mvpH   = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
         val colorH = GLES20.glGetUniformLocation(lineProgram, "uLineColor")
         GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+        GLES20.glEnableVertexAttribArray(posH)
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        // Backface culling: face winding is CCW outward; cull the inside
+        // walls of the cone so the lit/unlit faces don't overdraw.
+        GLES20.glEnable(GLES20.GL_CULL_FACE)
+        GLES20.glCullFace(GLES20.GL_BACK)
+        GLES20.glFrontFace(GLES20.GL_CCW)
 
-        // 1) Filled bright orange triangle.
-        val fillArr = FloatArray(fillVerts.size).also { for (i in it.indices) it[i] = fillVerts[i] }
-        val fillBuf = ByteBuffer.allocateDirect(fillArr.size * 4)
+        // Base colour: warm orange. Per-face shading tints between BASE_R/G/B
+        // (~brightness 1.0) at the lit face down to about 30% on the dark face.
+        val baseR = 0.95f; val baseG = 0.42f; val baseB = 0.08f
+
+        // Reusable scratch buffer — one triangle = 9 floats = 36 bytes.
+        val triBytes = ByteBuffer.allocateDirect(36)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()
-            .apply { put(fillArr); position(0) }
-        GLES20.glUniform4f(colorH, 1.00f, 0.45f, 0.10f, 0.95f)
-        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, fillBuf)
-        GLES20.glEnableVertexAttribArray(posH)
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, fillArr.size / 3)
+        val triArr = FloatArray(9)
 
-        // 2) Dark edge on top for contrast.
-        val edgeArr = FloatArray(edgeVerts.size).also { for (i in it.indices) it[i] = edgeVerts[i] }
-        val edgeBuf = ByteBuffer.allocateDirect(edgeArr.size * 4)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer()
-            .apply { put(edgeArr); position(0) }
-        GLES20.glUniform4f(colorH, 0.10f, 0.02f, 0.00f, 0.95f)
-        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, edgeBuf)
-        GLES20.glLineWidth(2.0f)
-        GLES20.glDrawArrays(GLES20.GL_LINES, 0, edgeArr.size / 3)
+        for (pos in positions) {
+            val n = normalize3(pos)
+            val (t1, t2) = tangentFrame(n)
 
+            val apex = floatArrayOf(
+                pos[0] + n[0] * height,
+                pos[1] + n[1] * height,
+                pos[2] + n[2] * height
+            )
+
+            // 3 base verts at 0°, 120°, 240° around the cone axis.
+            val cos120 = -0.5f
+            val sin120 =  0.8660254f
+            val cos240 = -0.5f
+            val sin240 = -0.8660254f
+            val b = arrayOf(
+                floatArrayOf(
+                    pos[0] + t1[0] * baseRadius,
+                    pos[1] + t1[1] * baseRadius,
+                    pos[2] + t1[2] * baseRadius
+                ),
+                floatArrayOf(
+                    pos[0] + (t1[0] * cos120 + t2[0] * sin120) * baseRadius,
+                    pos[1] + (t1[1] * cos120 + t2[1] * sin120) * baseRadius,
+                    pos[2] + (t1[2] * cos120 + t2[2] * sin120) * baseRadius
+                ),
+                floatArrayOf(
+                    pos[0] + (t1[0] * cos240 + t2[0] * sin240) * baseRadius,
+                    pos[1] + (t1[1] * cos240 + t2[1] * sin240) * baseRadius,
+                    pos[2] + (t1[2] * cos240 + t2[2] * sin240) * baseRadius
+                )
+            )
+
+            for (i in 0 until 3) {
+                val b1 = b[i]
+                val b2 = b[(i + 1) % 3]
+                // Face normal (CCW: b1 → b2 → apex).
+                val e1x = b2[0] - b1[0]; val e1y = b2[1] - b1[1]; val e1z = b2[2] - b1[2]
+                val e2x = apex[0] - b1[0]; val e2y = apex[1] - b1[1]; val e2z = apex[2] - b1[2]
+                val faceN = normalize3(floatArrayOf(
+                    e1y * e2z - e1z * e2y,
+                    e1z * e2x - e1x * e2z,
+                    e1x * e2y - e1y * e2x
+                ))
+                val dot = faceN[0] * lightModel[0] + faceN[1] * lightModel[1] + faceN[2] * lightModel[2]
+                // Map [-1,1] → [0.3, 1.0] so even the dark side stays visible.
+                val brightness = 0.65f + 0.35f * dot
+                val r = (baseR * brightness).coerceIn(0f, 1f)
+                val g = (baseG * brightness).coerceIn(0f, 1f)
+                val bC = (baseB * brightness).coerceIn(0f, 1f)
+                GLES20.glUniform4f(colorH, r, g, bC, 1.0f)
+
+                triArr[0] = b1[0]; triArr[1] = b1[1]; triArr[2] = b1[2]
+                triArr[3] = b2[0]; triArr[4] = b2[1]; triArr[5] = b2[2]
+                triArr[6] = apex[0]; triArr[7] = apex[1]; triArr[8] = apex[2]
+                triBytes.position(0); triBytes.put(triArr); triBytes.position(0)
+                GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, triBytes)
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 3)
+            }
+        }
+
+        GLES20.glDisable(GLES20.GL_CULL_FACE)
         GLES20.glDisableVertexAttribArray(posH)
     }
 

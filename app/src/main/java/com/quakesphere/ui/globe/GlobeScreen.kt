@@ -108,6 +108,10 @@ fun GlobeScreen(
     // imperative UI affordance) can call flyTo on it directly.
     var globeViewRef by remember { mutableStateOf<GlobeView?>(null) }
 
+    // Count of bundled active volcanoes — exposed by GlobeView synchronously,
+    // captured into Compose state so the header can render "N volcanoes".
+    var volcanoCount by remember { mutableStateOf(0) }
+
     // Replay: each time the index advances, fly the camera to that quake.
     LaunchedEffect(uiState.replay.isActive, uiState.replay.index) {
         if (!uiState.replay.isActive) return@LaunchedEffect
@@ -125,6 +129,7 @@ fun GlobeScreen(
         AndroidView(
             factory = { context ->
                 GlobeView(context).apply {
+                    volcanoCount = this.volcanoCount   // copy library-side count into Compose state
                     onMarkerClick  = { marker -> viewModel.selectEarthquakeById(marker.id) }
                     onStackClick   = { stack  -> viewModel.selectSwarm(stack.id) }
                     onVolcanoClick = { v ->
@@ -215,6 +220,17 @@ fun GlobeScreen(
                             Text(
                                 text = "${uiState.swarms.size} swarm${if (uiState.swarms.size > 1) "s" else ""}",
                                 color = Color(0xFFFFBB33),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        // Active volcano count — only shown when the layer is on
+                        // so users see what's actually on-screen, not a phantom number.
+                        if (uiState.displaySettings.showVolcanoes && volcanoCount > 0) {
+                            Text(text = "·", color = TextSecondary, fontSize = 12.sp)
+                            Text(
+                                text = "$volcanoCount volcano${if (volcanoCount > 1) "es" else ""}",
+                                color = Color(0xFFFF7733),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )

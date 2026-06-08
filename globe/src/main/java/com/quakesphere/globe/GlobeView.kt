@@ -132,10 +132,28 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             override fun onDown(e: MotionEvent): Boolean = true
         })
 
+    /**
+     * Public read-only count of bundled Holocene volcanoes. Available
+     * immediately after construction (loaded synchronously here, before
+     * the GL surface comes up), so headers etc. can show "N volcanoes"
+     * without waiting for a frame.
+     */
+    val volcanoCount: Int
+
     init {
         setEGLContextClientVersion(2)
         setRenderer(renderer)
         renderMode = RENDERMODE_CONTINUOUSLY
+
+        // Load the bundled Holocene volcanoes on the main thread before the
+        // GL surface exists. Tiny dataset (~70 entries / ~10 KB JSON), so
+        // synchronous parse is well under a frame and lets consumers read
+        // the count immediately.
+        val entries = com.quakesphere.globe.internal.VolcanoesLoader.load(context)
+        renderer.volcanoes        = entries.map { it.volcano }
+        renderer.volcanoPositions = entries.map { it.pos }
+        volcanoCount              = entries.size
+
         // Forward stack taps from the GL thread up to the main thread, where
         // consumers' Compose / View state lives.
         renderer.onStackTapped = { stack ->
