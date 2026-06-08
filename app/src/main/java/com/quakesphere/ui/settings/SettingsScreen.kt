@@ -178,6 +178,20 @@ fun SettingsScreen(
                     onCheckedChange = { viewModel.setShowHistoricTrends(it) }
                 )
                 HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Equator Line",
+                    subtitle = "Draw a thin reference circle at latitude 0",
+                    checked  = s.showEquator,
+                    onCheckedChange = { viewModel.setShowEquator(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Active Volcanoes",
+                    subtitle = "Holocene volcanoes from the Smithsonian GVP list",
+                    checked  = s.showVolcanoes,
+                    onCheckedChange = { viewModel.setShowVolcanoes(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 Text("Marker Colour Mode", color = TextPrimary, fontSize = 15.sp)
                 Text("What property drives dot colour", color = TextSecondary, fontSize = 12.sp)

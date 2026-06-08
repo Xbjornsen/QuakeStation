@@ -22,5 +22,15 @@ data class GlobeDisplaySettings(
      * Bright yellow→red zones are where significant quakes cluster
      * geologically. Computed at first run from plate-boundary proximity.
      */
-    val showHistoricTrends: Boolean = false
+    val showHistoricTrends: Boolean = false,
+    /**
+     * When true, draw a thin reference circle around the globe at latitude 0
+     * — the equator. Helpful for orientation when the globe is tilted.
+     */
+    val showEquator:        Boolean = false,
+    /**
+     * When true, show ~70 globally significant Holocene-active volcanoes
+     * as small orange triangles. Tap to surface name / country / elevation.
+     */
+    val showVolcanoes:      Boolean = false
 )

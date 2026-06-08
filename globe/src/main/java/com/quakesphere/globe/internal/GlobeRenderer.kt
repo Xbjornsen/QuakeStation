@@ -105,20 +105,27 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     // ── Ripples (animated expanding rings) ───────────────────────────────────
     @Volatile private var ripples: List<RippleSpec> = emptyList()
 
+    // ── Volcanoes (bundled Holocene set; rendered as orange triangles) ───────
+    @Volatile private var volcanoes: List<com.quakesphere.globe.Volcano> = emptyList()
+    @Volatile private var volcanoPositions: List<FloatArray> = emptyList()
+
     // ── Settings ─────────────────────────────────────────────────────────────
     @Volatile var showContinentLines = true
     @Volatile var showStars          = true
     @Volatile var autoRotate         = false
     @Volatile var showTectonicPlates = false
     @Volatile var showHistoricTrends = false
+    @Volatile var showEquator        = false
+    @Volatile var showVolcanoes      = false
 
     // ── Interaction tracking (used to pause auto-rotate after touches) ───────
     @Volatile private var lastInteractionMs = 0L
     private val AUTOROTATE_RESUME_DELAY_MS = 3000L
 
     // ── Tap callback ─────────────────────────────────────────────────────────
-    var onMarkerTapped: ((Marker) -> Unit)? = null
-    var onStackTapped:  ((MarkerStack) -> Unit)? = null
+    var onMarkerTapped:  ((Marker) -> Unit)? = null
+    var onStackTapped:   ((MarkerStack) -> Unit)? = null
+    var onVolcanoTapped: ((com.quakesphere.globe.Volcano) -> Unit)? = null
 
     // ── Viewport ─────────────────────────────────────────────────────────────
     private var viewportWidth  = 1
@@ -346,6 +353,7 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         setupStarField()
         setupContinents()
         setupTectonicPlates()
+        setupVolcanoes()
         // Heatmap is built on a background thread; the texture upload happens
         // in onDrawFrame when the pixels are ready. See [maybeUploadHeatmap].
         startHeatmapBuild()
@@ -422,11 +430,16 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         drawContinentFills()                                    // filled land before outlines
         if (showContinentLines) drawContinentLines()
         if (showTectonicPlates) drawTectonicPlates()
+        if (showEquator)        drawEquator()
         drawPoleAxisLine()
         drawPoleIndicators()
         drawRipples()
         drawStacks()
         drawMarkers()
+        // Volcanoes drawn LAST so they sit on top of the quake-marker layer.
+        // With 500+ markers visible the tiny triangles get painted over
+        // otherwise and become invisible.
+        if (showVolcanoes)      drawVolcanoes()
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -518,6 +531,18 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         plateLineBuffer = ByteBuffer.allocateDirect(verts.size * 4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()
             .apply { put(verts); position(0) }
+    }
+
+    /**
+     * Load the bundled Holocene volcanoes once. Tiny dataset (~70 entries)
+     * so we can parse on the GL thread without noticeably delaying first
+     * frame. Positions are pre-computed on the unit sphere; per-frame we
+     * just project them with mvMatrix to draw billboard triangles.
+     */
+    private fun setupVolcanoes() {
+        val entries = VolcanoesLoader.load(appContext)
+        volcanoes        = entries.map { it.volcano }
+        volcanoPositions = entries.map { it.pos }
     }
 
     /**
@@ -764,6 +789,130 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         val north = floatArrayOf(0f,  1.5f, 0f)
         val south = floatArrayOf(0f, -1.5f, 0f)
         drawLineSegment(north, south, 0.70f, 0.88f, 1.0f, 0.35f)
+    }
+
+    /**
+     * Equator: a thin reference circle around the globe at latitude = 0.
+     * Drawn slightly above the surface (r = 1.005) so it's not z-fought by
+     * the sphere mesh, in a soft cyan that reads against both ocean and land.
+     */
+    private val equatorBuffer: java.nio.FloatBuffer by lazy {
+        val segments = 180
+        val r = 1.005f
+        val verts = FloatArray(segments * 3)
+        for (i in 0 until segments) {
+            val a = (2.0 * PI * i / segments).toFloat()
+            verts[i * 3]     = r * cos(a)
+            verts[i * 3 + 1] = 0f
+            verts[i * 3 + 2] = r * sin(a)
+        }
+        ByteBuffer.allocateDirect(verts.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(verts); position(0) }
+    }
+
+    /**
+     * Draw each volcano as a small camera-facing filled triangle with a
+     * dark outline edge for contrast. Filled (GL_TRIANGLES) rather than
+     * outline-only (GL_LINES) because glLineWidth > 1 is unreliable on
+     * GLES 2.0 drivers — most clamp to 1 px and an outline-only triangle
+     * disappears against busy marker layers. Triangles are still flat /
+     * 2D — they billboard to face the camera.
+     *
+     * Backface cull: skip any volcano whose surface normal faces away from
+     * the camera so we don't draw triangles "through" the globe on the far
+     * side. Same trick markers use.
+     */
+    private fun drawVolcanoes() {
+        val positions = volcanoPositions
+        if (positions.isEmpty()) return
+
+        // Right / up in model space (billboard the triangle so it faces the camera).
+        val right = floatArrayOf(mvMatrix[0], mvMatrix[4], mvMatrix[8])
+        val up    = floatArrayOf(mvMatrix[1], mvMatrix[5], mvMatrix[9])
+        // Sized larger than magnitude markers (which use ~0.045 base) so the
+        // triangles read clearly on a crowded globe.
+        val size  = 0.060f
+
+        // No explicit backface cull — we rely on the depth buffer instead.
+        // Volcanoes sit at radius 1.012, the sphere mesh at 1.0; far-hemisphere
+        // volcanoes are behind the sphere in world Z so glDepthTest (GL_LESS)
+        // discards them. Early-culling here would be a tiny perf win (~35 of
+        // 70 verts skipped) but isn't worth the complexity / bug surface.
+
+        // Build fill (3 verts/triangle) and edge (6 verts/triangle for outline) buffers.
+        val fillVerts = ArrayList<Float>(positions.size * 9)
+        val edgeVerts = ArrayList<Float>(positions.size * 18)
+        for (pos in positions) {
+            val tx = pos[0] + up[0] * size
+            val ty = pos[1] + up[1] * size
+            val tz = pos[2] + up[2] * size
+            val blx = pos[0] + (-right[0] - up[0] * 0.5f) * size
+            val bly = pos[1] + (-right[1] - up[1] * 0.5f) * size
+            val blz = pos[2] + (-right[2] - up[2] * 0.5f) * size
+            val brx = pos[0] + ( right[0] - up[0] * 0.5f) * size
+            val bry = pos[1] + ( right[1] - up[1] * 0.5f) * size
+            val brz = pos[2] + ( right[2] - up[2] * 0.5f) * size
+
+            // Filled triangle (CCW from camera POV).
+            fillVerts.add(tx); fillVerts.add(ty); fillVerts.add(tz)
+            fillVerts.add(blx); fillVerts.add(bly); fillVerts.add(blz)
+            fillVerts.add(brx); fillVerts.add(bry); fillVerts.add(brz)
+
+            // Outline edges (3 segments).
+            edgeVerts.add(tx);  edgeVerts.add(ty);  edgeVerts.add(tz);  edgeVerts.add(brx); edgeVerts.add(bry); edgeVerts.add(brz)
+            edgeVerts.add(brx); edgeVerts.add(bry); edgeVerts.add(brz); edgeVerts.add(blx); edgeVerts.add(bly); edgeVerts.add(blz)
+            edgeVerts.add(blx); edgeVerts.add(bly); edgeVerts.add(blz); edgeVerts.add(tx);  edgeVerts.add(ty);  edgeVerts.add(tz)
+        }
+        if (fillVerts.isEmpty()) return
+
+        GLES20.glUseProgram(lineProgram)
+        val posH   = GLES20.glGetAttribLocation(lineProgram,  "aPosition")
+        val mvpH   = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
+        val colorH = GLES20.glGetUniformLocation(lineProgram, "uLineColor")
+        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+
+        // 1) Filled bright orange triangle.
+        val fillArr = FloatArray(fillVerts.size).also { for (i in it.indices) it[i] = fillVerts[i] }
+        val fillBuf = ByteBuffer.allocateDirect(fillArr.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(fillArr); position(0) }
+        GLES20.glUniform4f(colorH, 1.00f, 0.45f, 0.10f, 0.95f)
+        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, fillBuf)
+        GLES20.glEnableVertexAttribArray(posH)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, fillArr.size / 3)
+
+        // 2) Dark edge on top for contrast.
+        val edgeArr = FloatArray(edgeVerts.size).also { for (i in it.indices) it[i] = edgeVerts[i] }
+        val edgeBuf = ByteBuffer.allocateDirect(edgeArr.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(edgeArr); position(0) }
+        GLES20.glUniform4f(colorH, 0.10f, 0.02f, 0.00f, 0.95f)
+        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, edgeBuf)
+        GLES20.glLineWidth(2.0f)
+        GLES20.glDrawArrays(GLES20.GL_LINES, 0, edgeArr.size / 3)
+
+        GLES20.glDisableVertexAttribArray(posH)
+    }
+
+    private fun drawEquator() {
+        GLES20.glUseProgram(lineProgram)
+        val posH   = GLES20.glGetAttribLocation(lineProgram,  "aPosition")
+        val mvpH   = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
+        val colorH = GLES20.glGetUniformLocation(lineProgram, "uLineColor")
+
+        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
+        // Soft cyan — distinct from continent (blue-white) and plate (orange).
+        GLES20.glUniform4f(colorH, 0.45f, 0.90f, 1.00f, 0.55f)
+
+        equatorBuffer.position(0)
+        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, equatorBuffer)
+        GLES20.glEnableVertexAttribArray(posH)
+        GLES20.glLineWidth(1.8f)
+        GLES20.glDrawArrays(GLES20.GL_LINE_LOOP, 0, 180)
+        GLES20.glDisableVertexAttribArray(posH)
     }
 
     private fun drawMarkers() {
@@ -1090,6 +1239,23 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
             if (stack != null) {
                 onStackTapped?.invoke(stack)
                 return null
+            }
+        }
+
+        // 1b. Volcanoes (only when the layer is visible). Same hit radius as
+        // markers — triangles are about the same screen size.
+        if (showVolcanoes && volcanoPositions.isNotEmpty()) {
+            var bestVolc = -1; var bestVolcDist = Float.MAX_VALUE
+            volcanoPositions.forEachIndexed { i, pos ->
+                val d = rayPointDistance(ro, rd, pos)
+                if (d < 0.09f && d < bestVolcDist) { bestVolcDist = d; bestVolc = i }
+            }
+            if (bestVolc >= 0) {
+                val v = volcanoes.getOrNull(bestVolc)
+                if (v != null) {
+                    onVolcanoTapped?.invoke(v)
+                    return null
+                }
             }
         }
 

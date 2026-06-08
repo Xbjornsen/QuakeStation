@@ -45,6 +45,12 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
      */
     var onStackClick: ((MarkerStack) -> Unit)? = null
 
+    /**
+     * Invoked on the main thread when the user taps a [Volcano] triangle
+     * (only fires when the volcano layer is enabled via [GlobeDisplaySettings.showVolcanoes]).
+     */
+    var onVolcanoClick: ((Volcano) -> Unit)? = null
+
     // ── Public data setters ──────────────────────────────────────────────────
 
     /** Replaces the flat marker layer. Markers in [markers] that share a
@@ -85,6 +91,8 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             renderer.autoRotate         = value.autoRotate
             renderer.showTectonicPlates = value.showTectonicPlates
             renderer.showHistoricTrends = value.showHistoricTrends
+            renderer.showEquator        = value.showEquator
+            renderer.showVolcanoes      = value.showVolcanoes
         }
 
     // ── Touch handling ───────────────────────────────────────────────────────
@@ -132,6 +140,9 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
         // consumers' Compose / View state lives.
         renderer.onStackTapped = { stack ->
             post { onStackClick?.invoke(stack) }
+        }
+        renderer.onVolcanoTapped = { volcano ->
+            post { onVolcanoClick?.invoke(volcano) }
         }
     }
 

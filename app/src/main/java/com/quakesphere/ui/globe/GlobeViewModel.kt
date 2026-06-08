@@ -33,6 +33,8 @@ data class GlobeDisplaySettings(
     val autoRotate:             Boolean = false,
     val showTectonicPlates:     Boolean = false,
     val showHistoricTrends:     Boolean = false,
+    val showEquator:            Boolean = false,
+    val showVolcanoes:          Boolean = false,
     val markerColorByMagnitude: Boolean = false,
     val useMiles:               Boolean = false
 )
@@ -80,6 +82,8 @@ class GlobeViewModel @Inject constructor(
         val KEY_AUTO_ROTATE          = booleanPreferencesKey("auto_rotate")
         val KEY_SHOW_TECTONIC_PLATES = booleanPreferencesKey("show_tectonic_plates")
         val KEY_SHOW_HISTORIC_TRENDS = booleanPreferencesKey("show_historic_trends")
+        val KEY_SHOW_EQUATOR         = booleanPreferencesKey("show_equator")
+        val KEY_SHOW_VOLCANOES       = booleanPreferencesKey("show_volcanoes")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SWARM_MIN_EVENTS     = androidx.datastore.preferences.core.intPreferencesKey("swarm_min_events")
         val KEY_TIME_RANGE           = stringPreferencesKey("time_range")
@@ -127,6 +131,8 @@ class GlobeViewModel @Inject constructor(
                             autoRotate             = prefs[KEY_AUTO_ROTATE] ?: false,
                             showTectonicPlates     = prefs[KEY_SHOW_TECTONIC_PLATES] ?: false,
                             showHistoricTrends     = prefs[KEY_SHOW_HISTORIC_TRENDS] ?: false,
+                            showEquator            = prefs[KEY_SHOW_EQUATOR] ?: false,
+                            showVolcanoes          = prefs[KEY_SHOW_VOLCANOES] ?: false,
                             markerColorByMagnitude = (prefs[KEY_MARKER_COLOR_MODE] ?: "depth") == "magnitude",
                             useMiles               = (prefs[KEY_DISTANCE_UNIT] ?: "km") == "miles"
                         ),
@@ -195,6 +201,15 @@ class GlobeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(selectedSwarmId = id)
     }
     fun clearError()     { _uiState.value = _uiState.value.copy(errorMessage = null) }
+
+    /**
+     * Surface a one-shot informational message via the existing snackbar
+     * pipeline. Used e.g. by the volcano-tap handler; reusing the
+     * errorMessage channel avoids adding a second snackbar host.
+     */
+    fun showTransientMessage(msg: String) {
+        _uiState.value = _uiState.value.copy(errorMessage = msg)
+    }
 
     // ── Replay ──────────────────────────────────────────────────────────────
 

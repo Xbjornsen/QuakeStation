@@ -1,0 +1,142 @@
+name: Release
+
+# Triggered manually: "let's do a new release" -> run this with a version like v0.1.0.
+# Patches the app's versionCode + versionName, builds a signed release APK,
+# tags the commit, and creates a GitHub Release with auto-generated notes
+# (overridable via the `notes` input) and the APK attached.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   KEYSTORE_BASE64    - base64 of your release keystore (`base64 -w0 keystore.jks`)
+#   KEYSTORE_PASSWORD  - store password
+#   KEY_ALIAS          - key alias
+#   KEY_PASSWORD       - key password
+#
+# If KEYSTORE_BASE64 is missing the build falls back to debug signing so the
+# pipeline still works end-to-end while the user is setting up signing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.1.0)'
+        required: true
+        type: string
+      notes:
+        description: 'Manual release notes (markdown). Leave blank to auto-generate from commits.'
+        required: false
+        type: string
+
+permissions:
+  contents: write   # needed to create the tag + release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "Version must look like v1.2.3 or v1.2.3-beta1 - got '${{ inputs.version }}'"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history so `git rev-list --count HEAD` gives a monotonic versionCode.
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Compute versionCode + versionName
+        id: version
+        run: |
+          VERSION_NAME="${{ inputs.version }}"
+          VERSION_NAME="${VERSION_NAME#v}"   # strip leading v
+          VERSION_CODE=$(git rev-list --count HEAD)
+          echo "name=$VERSION_NAME"   >> "$GITHUB_OUTPUT"
+          echo "code=$VERSION_CODE"   >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION_NAME ($VERSION_CODE)"
+
+      - name: Patch app/build.gradle.kts with version
+        run: |
+          # In-place sed: replace `versionCode = N` and `versionName = "X"` lines.
+          # The defaults committed in app/build.gradle.kts (versionCode = 1, versionName = "1.0")
+          # are intentionally simple-to-match patterns for this rewrite step.
+          sed -i -E "s/versionCode = [0-9]+/versionCode = ${{ steps.version.outputs.code }}/" app/build.gradle.kts
+          sed -i -E "s/versionName = \"[^\"]+\"/versionName = \"${{ steps.version.outputs.name }}\"/" app/build.gradle.kts
+          grep -E 'versionCode|versionName' app/build.gradle.kts
+
+      - name: Decode release keystore (if configured)
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No KEYSTORE_BASE64 secret - release build will fall back to debug signing."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > app/keystore.jks
+          cat > app/keystore.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Stage APK with versioned name
+        id: rename
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk \
+             "dist/QuakeStation-${{ inputs.version }}.apk"
+          echo "apk_path=dist/QuakeStation-${{ inputs.version }}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SIGNED_NOTE=""
+          if [ "${{ steps.keystore.outputs.signed }}" != "true" ]; then
+            SIGNED_NOTE=$'\n\n> Note: built without a release keystore - APK is debug-signed.'
+          fi
+
+          if [ -n "${{ inputs.notes }}" ]; then
+            NOTES_FILE=$(mktemp)
+            printf '%s%s\n' "${{ inputs.notes }}" "$SIGNED_NOTE" > "$NOTES_FILE"
+            gh release create "${{ inputs.version }}" \
+              "${{ steps.rename.outputs.apk_path }}" \
+              --title "QuakeStation ${{ inputs.version }}" \
+              --notes-file "$NOTES_FILE" \
+              --target "${{ github.sha }}"
+          else
+            # Auto-generate notes from commits since last tag.
+            gh release create "${{ inputs.version }}" \
+              "${{ steps.rename.outputs.apk_path }}" \
+              --title "QuakeStation ${{ inputs.version }}" \
+              --generate-notes \
+              --target "${{ github.sha }}"
+            if [ -n "$SIGNED_NOTE" ]; then
+              # Append the signing note to whatever gh auto-generated.
+              CURRENT=$(gh release view "${{ inputs.version }}" --json body -q .body)
+              printf '%s%s\n' "$CURRENT" "$SIGNED_NOTE" | \
+                gh release edit "${{ inputs.version }}" --notes-file -
+            fi
+          fi

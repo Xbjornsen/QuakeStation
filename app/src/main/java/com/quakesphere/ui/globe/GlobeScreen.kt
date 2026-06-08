@@ -5,6 +5,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -122,8 +125,16 @@ fun GlobeScreen(
         AndroidView(
             factory = { context ->
                 GlobeView(context).apply {
-                    onMarkerClick = { marker -> viewModel.selectEarthquakeById(marker.id) }
-                    onStackClick  = { stack  -> viewModel.selectSwarm(stack.id) }
+                    onMarkerClick  = { marker -> viewModel.selectEarthquakeById(marker.id) }
+                    onStackClick   = { stack  -> viewModel.selectSwarm(stack.id) }
+                    onVolcanoClick = { v ->
+                        // Phone-friendly toast: name + country + summit elev. Tapping a
+                        // volcano shouldn't fight the earthquake selection UI, so we
+                        // just surface a snackbar — full bottom card can land later
+                        // alongside the USGS live-alerts pass.
+                        val elev = if (v.elevM > 0) " · ${v.elevM} m" else if (v.elevM < 0) " · submarine" else ""
+                        viewModel.showTransientMessage("🌋 ${v.name} (${v.country})$elev")
+                    }
                     globeViewRef = this
                 }
             },
@@ -161,7 +172,9 @@ fun GlobeScreen(
                     // every flyTo() and confuse the time-lapse.
                     autoRotate         = uiState.displaySettings.autoRotate && !replay.isActive,
                     showTectonicPlates = uiState.displaySettings.showTectonicPlates,
-                    showHistoricTrends = uiState.displaySettings.showHistoricTrends
+                    showHistoricTrends = uiState.displaySettings.showHistoricTrends,
+                    showEquator        = uiState.displaySettings.showEquator,
+                    showVolcanoes      = uiState.displaySettings.showVolcanoes
                 )
             },
             modifier = Modifier.fillMaxSize()
@@ -599,8 +612,17 @@ fun SwarmInfoCard(
                 swarm.events.sortedByDescending { it.time }
             else
                 swarm.events.sortedByDescending { it.mag }
-            // Mini-table: tap a row to focus that quake.
-            orderedEvents.take(8).forEach { event ->
+            // Mini-table: tap a row to focus that quake. Scrollable so big
+            // swarms (30+ events) don't truncate at an arbitrary cap; we
+            // bound the height so the card never eats the whole screen.
+            val listScroll = androidx.compose.foundation.rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 280.dp)
+                    .verticalScroll(listScroll)
+            ) {
+            orderedEvents.forEach { event ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -637,15 +659,7 @@ fun SwarmInfoCard(
                     )
                 }
             }
-            if (orderedEvents.size > 8) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text     = "+ ${orderedEvents.size - 8} more",
-                    color    = TextSecondary,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(start = 38.dp)
-                )
-            }
+            }  // end scrollable Column
         }
     }
 }

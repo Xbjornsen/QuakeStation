@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -19,6 +22,34 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing.
+    //
+    // Local: drop your keystore at app/keystore.jks and create app/keystore.properties
+    // (gitignored) with: storePassword, keyAlias, keyPassword.
+    //
+    // CI: the release workflow decodes secrets.KEYSTORE_BASE64 into app/keystore.jks
+    // and writes app/keystore.properties before running :app:assembleRelease.
+    //
+    // If neither file is present the release build falls back to the debug signing
+    // config so unsigned-CI builds still produce an installable APK.
+    val keystoreProps = Properties().apply {
+        val f = rootProject.file("app/keystore.properties")
+        if (f.exists()) FileInputStream(f).use { load(it) }
+    }
+    val keystoreFile = rootProject.file("app/keystore.jks")
+    val hasReleaseKeystore = keystoreFile.exists() && !keystoreProps.isEmpty
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile     = keystoreFile
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias      = keystoreProps.getProperty("keyAlias")
+                keyPassword   = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -26,6 +57,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = if (hasReleaseKeystore)
+                signingConfigs.getByName("release")
+            else
+                signingConfigs.getByName("debug")
         }
     }
     compileOptions {
