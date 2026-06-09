@@ -90,7 +90,10 @@ jobs:
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > app/keystore.jks
+          # tr strips any whitespace/CR that may have been embedded by the
+          # source that set the secret (e.g. piping from PowerShell on Windows
+          # appends \r\n which `base64 -d` rejects as "invalid input").
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > app/keystore.jks
           cat > app/keystore.properties <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyAlias=$KEY_ALIAS
