@@ -8,8 +8,10 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.quakesphere.data.repository.VolcanicActivityRepository
 import com.quakesphere.domain.model.Earthquake
 import com.quakesphere.domain.model.EarthquakeSwarm
+import com.quakesphere.domain.model.VolcanoActivity
 import com.quakesphere.domain.usecase.DetectSwarmsUseCase
 import com.quakesphere.domain.usecase.GetEarthquakesUseCase
 import com.quakesphere.domain.usecase.SyncEarthquakesUseCase
@@ -35,7 +37,6 @@ data class GlobeDisplaySettings(
     val showHistoricTrends:     Boolean = false,
     val showEquator:            Boolean = false,
     val showVolcanoes:          Boolean = false,
-    val showPeaks:              Boolean = false,
     val showTopography:         Boolean = false,
     val markerColorByMagnitude: Boolean = false,
     val useMiles:               Boolean = false
@@ -47,7 +48,12 @@ data class GlobeUiState(
     val selectedEarthquake: Earthquake?        = null,
     val selectedSwarmId:    String?            = null,
     val selectedVolcano:    com.quakesphere.globe.Volcano? = null,
-    val selectedPeak:       com.quakesphere.globe.Peak? = null,
+    /**
+     * Live Smithsonian GVP Weekly Volcanic Activity Report entries from the
+     * last ~2 weeks, most recent first. Drives the "X currently active"
+     * header chip and per-volcano activity callouts.
+     */
+    val volcanicActivity: List<VolcanoActivity> = emptyList(),
     val isLoading:       Boolean               = false,
     val errorMessage:    String?               = null,
     val minMagnitude:    Double                = 5.0,
@@ -75,6 +81,7 @@ data class ReplayState(
 class GlobeViewModel @Inject constructor(
     private val getEarthquakesUseCase: GetEarthquakesUseCase,
     private val syncEarthquakesUseCase: SyncEarthquakesUseCase,
+    private val volcanicActivityRepository: VolcanicActivityRepository,
     private val detectSwarmsUseCase: DetectSwarmsUseCase,
     private val dataStore: DataStore<Preferences>
 ) : ViewModel() {
@@ -88,7 +95,6 @@ class GlobeViewModel @Inject constructor(
         val KEY_SHOW_HISTORIC_TRENDS = booleanPreferencesKey("show_historic_trends")
         val KEY_SHOW_EQUATOR         = booleanPreferencesKey("show_equator")
         val KEY_SHOW_VOLCANOES       = booleanPreferencesKey("show_volcanoes")
-        val KEY_SHOW_PEAKS           = booleanPreferencesKey("show_peaks")
         val KEY_SHOW_TOPOGRAPHY      = booleanPreferencesKey("show_topography")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SWARM_MIN_EVENTS     = androidx.datastore.preferences.core.intPreferencesKey("swarm_min_events")
@@ -113,7 +119,23 @@ class GlobeViewModel @Inject constructor(
 
     init {
         observeSettingsAndEarthquakes()
+        observeVolcanicActivity()
         syncEarthquakes()
+        // Kick off a one-shot volcanic-activity sync at startup so the
+        // header chip lights up immediately on first launch rather than
+        // waiting for the next periodic WorkManager run.
+        viewModelScope.launch {
+            try { volcanicActivityRepository.sync() } catch (_: Throwable) { /* offline tolerated */ }
+        }
+    }
+
+    /** Surface the cached Weekly Volcanic Activity Report into UiState. */
+    private fun observeVolcanicActivity() {
+        viewModelScope.launch {
+            volcanicActivityRepository.observeRecent(windowDays = 14).collect { list ->
+                _uiState.value = _uiState.value.copy(volcanicActivity = list)
+            }
+        }
     }
 
     private fun observeSettingsAndEarthquakes() {
@@ -139,7 +161,6 @@ class GlobeViewModel @Inject constructor(
                             showHistoricTrends     = prefs[KEY_SHOW_HISTORIC_TRENDS] ?: false,
                             showEquator            = prefs[KEY_SHOW_EQUATOR] ?: false,
                             showVolcanoes          = prefs[KEY_SHOW_VOLCANOES] ?: false,
-                            showPeaks              = prefs[KEY_SHOW_PEAKS] ?: false,
                             showTopography         = prefs[KEY_SHOW_TOPOGRAPHY] ?: false,
                             markerColorByMagnitude = (prefs[KEY_MARKER_COLOR_MODE] ?: "depth") == "magnitude",
                             useMiles               = (prefs[KEY_DISTANCE_UNIT] ?: "km") == "miles"
@@ -216,17 +237,6 @@ class GlobeViewModel @Inject constructor(
     fun selectVolcano(volcano: com.quakesphere.globe.Volcano?) {
         _uiState.value = _uiState.value.copy(
             selectedVolcano    = volcano,
-            selectedPeak       = null,
-            selectedEarthquake = null,
-            selectedSwarmId    = null
-        )
-    }
-
-    /** Peak tap → show the peak bottom card. Same single-card rule. */
-    fun selectPeak(peak: com.quakesphere.globe.Peak?) {
-        _uiState.value = _uiState.value.copy(
-            selectedPeak       = peak,
-            selectedVolcano    = null,
             selectedEarthquake = null,
             selectedSwarmId    = null
         )

@@ -19,12 +19,9 @@ data class Volcano(
     /** Summit elevation in metres above sea level. Negative for submarine volcanoes. */
     val elevM: Int,
     val lat: Float,
-    val lon: Float,
-    /**
-     * Best-effort year of the most recent eruption (e.g. "2024"). Null when
-     * we don't have a reliable date. Used to surface "most recent eruption"
-     * pills and similar headers; do not rely on these dates for science —
-     * they're hand-curated from common knowledge, not the Smithsonian feed.
-     */
-    val lastEruption: String? = null
+    val lon: Float
+    // Note: `lastEruption` was removed once the Smithsonian Weekly Volcanic
+    // Activity Report feed went live. Hand-curated years went stale within
+    // weeks and competed with the live signal for "is this volcano active".
+    // The live feed is now the single source of truth for activity state.
 )

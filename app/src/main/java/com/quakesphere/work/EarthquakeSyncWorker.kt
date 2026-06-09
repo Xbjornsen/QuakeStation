@@ -13,6 +13,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.quakesphere.data.repository.VolcanicActivityRepository
 import com.quakesphere.domain.repository.EarthquakeRepository
 import java.util.concurrent.TimeUnit
 import com.quakesphere.notification.EarthquakeNotificationManager
@@ -27,6 +28,7 @@ class EarthquakeSyncWorker @AssistedInject constructor(
     @Assisted private val context: Context,
     @Assisted workerParams: WorkerParameters,
     private val repository: EarthquakeRepository,
+    private val volcanicActivityRepository: VolcanicActivityRepository,
     private val notificationManager: EarthquakeNotificationManager,
     private val dataStore: DataStore<Preferences>
 ) : CoroutineWorker(context, workerParams) {
@@ -41,6 +43,14 @@ class EarthquakeSyncWorker @AssistedInject constructor(
 
             // Fetch latest earthquakes
             val syncResult = repository.syncEarthquakes(minMag)
+
+            // Fetch the Smithsonian Weekly Volcanic Activity Report. Cheap
+            // (~30 entries, ~30 KB) and idempotent — re-syncing on the
+            // 15-min earthquake cadence is overkill for a feed that updates
+            // weekly, but cost is negligible and means the moment a new
+            // weekly issue drops we pick it up. Failures are silent;
+            // earthquake sync is the primary job here.
+            volcanicActivityRepository.sync()
 
             if (syncResult.isSuccess && notificationsEnabled) {
                 // Check if we have notification permission

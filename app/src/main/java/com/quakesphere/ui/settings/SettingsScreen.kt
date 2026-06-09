@@ -193,13 +193,6 @@ fun SettingsScreen(
                 )
                 HorizontalDivider(color = SurfaceVariant)
                 ToggleRow(
-                    title    = "Major Peaks",
-                    subtitle = "Seven Summits, the eight-thousanders, and iconic peaks per continent",
-                    checked  = s.showPeaks,
-                    onCheckedChange = { viewModel.setShowPeaks(it) }
-                )
-                HorizontalDivider(color = SurfaceVariant)
-                ToggleRow(
                     title    = "Topographic Relief",
                     subtitle = "Bump the globe outward where mountains are (Himalayas, Andes, Rockies…)",
                     checked  = s.showTopography,

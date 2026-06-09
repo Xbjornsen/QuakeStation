@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.quakesphere.data.db.EarthquakeDao
 import com.quakesphere.data.db.EarthquakeDatabase
+import com.quakesphere.data.db.VolcanoActivityDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -34,4 +35,9 @@ object DatabaseModule {
     fun provideEarthquakeDao(database: EarthquakeDatabase): EarthquakeDao {
         return database.earthquakeDao()
     }
+
+    @Provides
+    @Singleton
+    fun provideVolcanoActivityDao(database: EarthquakeDatabase): VolcanoActivityDao =
+        database.volcanoActivityDao()
 }

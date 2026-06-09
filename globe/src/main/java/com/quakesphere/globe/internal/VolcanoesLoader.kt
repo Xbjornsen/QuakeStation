@@ -34,8 +34,9 @@ internal object VolcanoesLoader {
                 type    = o.get("type")?.asString ?: "",
                 elevM   = o.get("elevM")?.asInt ?: 0,
                 lat     = lat,
-                lon     = lon,
-                lastEruption = o.get("lastEruption")?.takeIf { !it.isJsonNull }?.asString
+                lon     = lon
+                // `lastEruption` field in the JSON is ignored — live activity
+                // feed is now the source of truth (see VolcanicActivityRepository).
             )
             out.add(Entry(volcano, latLonToXYZ(lat, lon, VOLCANO_RADIUS)))
         }

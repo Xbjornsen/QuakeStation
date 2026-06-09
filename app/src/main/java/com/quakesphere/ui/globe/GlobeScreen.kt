@@ -114,10 +114,19 @@ fun GlobeScreen(
     // Count of bundled active volcanoes — exposed by GlobeView synchronously,
     // captured into Compose state so the header can render "N volcanoes".
     var volcanoCount by remember { mutableStateOf(0) }
-    // Full volcano list (used by the "recent volcano" pill). Captured once
-    // at factory time — the bundled set doesn't change at runtime.
+    // Full volcano list (used by the "recent volcano" pill + the
+    // recently-active count chip). Captured once at factory time — the
+    // bundled set doesn't change at runtime.
     var volcanoes by remember { mutableStateOf<List<com.quakesphere.globe.Volcano>>(emptyList()) }
-    var peakCount by remember { mutableStateOf(0) }
+
+    // "Currently active" = number of distinct volcanoes that appeared in
+    // the Smithsonian GVP Weekly Volcanic Activity Report in the last two
+    // weeks. Live data from the network feed, cached in Room — replaces
+    // the previous static "lastEruption ≥ year - 5" heuristic which only
+    // saw the bundled list and never updated.
+    val currentlyActiveCount = remember(uiState.volcanicActivity) {
+        uiState.volcanicActivity.map { it.volcanoName }.toSet().size
+    }
 
     // Replay: each time the index advances, fly the camera to that quake.
     LaunchedEffect(uiState.replay.isActive, uiState.replay.index) {
@@ -138,11 +147,9 @@ fun GlobeScreen(
                 GlobeView(context).apply {
                     volcanoCount = this.volcanoCount   // copy library-side count into Compose state
                     volcanoes    = this.volcanoes
-                    peakCount    = this.peakCount
                     onMarkerClick  = { marker -> viewModel.selectEarthquakeById(marker.id) }
                     onStackClick   = { stack  -> viewModel.selectSwarm(stack.id) }
                     onVolcanoClick = { v -> viewModel.selectVolcano(v) }
-                    onPeakClick    = { p -> viewModel.selectPeak(p) }
                     globeViewRef = this
                 }
             },
@@ -183,7 +190,6 @@ fun GlobeScreen(
                     showHistoricTrends = uiState.displaySettings.showHistoricTrends,
                     showEquator        = uiState.displaySettings.showEquator,
                     showVolcanoes      = uiState.displaySettings.showVolcanoes,
-                    showPeaks          = uiState.displaySettings.showPeaks,
                     showTopography     = uiState.displaySettings.showTopography
                 )
             },
@@ -235,22 +241,13 @@ fun GlobeScreen(
                                 maxLines = 1
                             )
                         }
-                        // Peaks count — same rule: only shown when layer is on.
-                        if (uiState.displaySettings.showPeaks && peakCount > 0) {
+                        // "X currently active" — live count from the
+                        // Smithsonian Weekly Volcanic Activity Report,
+                        // collapsed to distinct volcano names.
+                        if (uiState.displaySettings.showVolcanoes && currentlyActiveCount > 0) {
                             Text(text = "·", color = TextSecondary, fontSize = 12.sp)
                             Text(
-                                text = "$peakCount peak${if (peakCount > 1) "s" else ""}",
-                                color = Color(0xFFEBEFF7),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        // Active volcano count — only shown when the layer is on
-                        // so users see what's actually on-screen, not a phantom number.
-                        if (uiState.displaySettings.showVolcanoes && volcanoCount > 0) {
-                            Text(text = "·", color = TextSecondary, fontSize = 12.sp)
-                            Text(
-                                text = "$volcanoCount volcano${if (volcanoCount > 1) "es" else ""}",
+                                text = "$currentlyActiveCount currently active",
                                 color = Color(0xFFFF7733),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -360,16 +357,24 @@ fun GlobeScreen(
                 }
             }
 
-            // ── Most-recent-eruption pill (only when volcanoes are on) ─────
-            // Smaller secondary pill below the quake highlight pill. Tap →
-            // fly to + select volcano card, same pattern as the quake pill.
+            // ── Active-now pill (only when volcanoes are on AND the live
+            // feed has matched something). Tap → fly to + select volcano
+            // card. No fallback to bundled lastEruption — the live feed is
+            // the only source of truth for "currently active" now.
             if (uiState.displaySettings.showVolcanoes) {
-                val recentVolcano = remember(volcanoes) {
-                    volcanoes
-                        .filter { !it.lastEruption.isNullOrBlank() }
-                        .maxByOrNull { it.lastEruption!!.toIntOrNull() ?: 0 }
+                val activeVolcano = remember(volcanoes, uiState.volcanicActivity) {
+                    fun matches(name: String, target: String): Boolean =
+                        name.equals(target, ignoreCase = true) ||
+                        name.contains(target, ignoreCase = true) ||
+                        target.contains(name, ignoreCase = true)
+
+                    uiState.volcanicActivity
+                        .sortedByDescending { it.publishedAt }
+                        .firstNotNullOfOrNull { act ->
+                            volcanoes.firstOrNull { matches(it.name, act.volcanoName) }
+                        }
                 }
-                recentVolcano?.let { v ->
+                activeVolcano?.let { v ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -457,23 +462,6 @@ fun GlobeScreen(
             }
         }
 
-        // ── Selected peak popup ──────────────────────────────────────────────
-        AnimatedVisibility(
-            visible = uiState.selectedPeak != null,
-            enter   = slideInVertically(initialOffsetY = { it }),
-            exit    = slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            uiState.selectedPeak?.let { p ->
-                SelectedPeakCard(
-                    peak      = p,
-                    useMiles  = uiState.displaySettings.useMiles,
-                    onDismiss = { viewModel.selectPeak(null) },
-                    modifier  = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                )
-            }
-        }
-
         // ── Selected volcano popup ───────────────────────────────────────────
         AnimatedVisibility(
             visible = uiState.selectedVolcano != null,
@@ -482,8 +470,21 @@ fun GlobeScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             uiState.selectedVolcano?.let { v ->
+                // Match this volcano against the live Weekly Activity Report
+                // entries so the card can show the current activity summary
+                // when there is one.
+                val activity = remember(v, uiState.volcanicActivity) {
+                    uiState.volcanicActivity
+                        .sortedByDescending { it.publishedAt }
+                        .firstOrNull { act ->
+                            v.name.equals(act.volcanoName, ignoreCase = true) ||
+                            v.name.contains(act.volcanoName, ignoreCase = true) ||
+                            act.volcanoName.contains(v.name, ignoreCase = true)
+                        }
+                }
                 SelectedVolcanoCard(
                     volcano   = v,
+                    activity  = activity,
                     useMiles  = uiState.displaySettings.useMiles,
                     onDismiss = { viewModel.selectVolcano(null) },
                     modifier  = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
@@ -836,8 +837,10 @@ fun HighlightQuakePill(
 }
 
 /**
- * Smaller pill surfaced below the quake highlight when the volcanoes layer is on.
- * Shows the most-recently-erupted volcano in the bundled set with year + name.
+ * Smaller pill surfaced below the quake highlight when the volcanoes layer
+ * is on AND the live Smithsonian Weekly Volcanic Activity Report matched
+ * a bundled volcano. Shown as "ACTIVE NOW · Name · Country" — never
+ * rendered when there's no live signal (no bundled-data fallback).
  */
 @Composable
 fun RecentVolcanoPill(
@@ -854,24 +857,17 @@ fun RecentVolcanoPill(
     ) {
         Text(
             text = "▲",
-            color = Color(0xFFFF7733),
+            color = Color(0xFFFF6644),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
         )
         Spacer(Modifier.width(7.dp))
         Text(
-            text = "ERUPTED",
-            color = Color(0xFFFFB07A),
+            text = "ACTIVE NOW",
+            color = Color(0xFFFF6644),
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.5.sp
-        )
-        Spacer(Modifier.width(7.dp))
-        Text(
-            text = volcano.lastEruption ?: "?",
-            color = Color(0xFFFF7733),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold
         )
         Spacer(Modifier.width(7.dp))
         Text(
@@ -949,109 +945,6 @@ fun LegendItem(color: Color, label: String) {
     }
 }
 
-// ── Selected peak card ─────────────────────────────────────────────────────
-
-@Composable
-fun SelectedPeakCard(
-    peak: com.quakesphere.globe.Peak,
-    useMiles: Boolean,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier  = modifier.fillMaxWidth(),
-        colors    = CardDefaults.cardColors(containerColor = SurfaceCard),
-        shape     = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(8.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    PeakBadgeLarge()
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text          = "PEAK",
-                            color         = Color(0xFFEBEFF7),
-                            fontSize      = 10.sp,
-                            fontWeight    = FontWeight.Bold,
-                            letterSpacing = 1.5.sp
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text       = peak.name,
-                            color      = TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize   = 15.sp,
-                            maxLines   = 2
-                        )
-                        Text(
-                            text     = if (peak.range.isNotBlank()) "${peak.range} · ${peak.country}" else peak.country,
-                            color    = TextSecondary,
-                            fontSize = 12.sp,
-                            maxLines = 1
-                        )
-                    }
-                }
-                Text(
-                    text     = "✕",
-                    color    = TextSecondary,
-                    fontSize = 18.sp,
-                    modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
-                )
-            }
-            if (peak.prominence.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text     = peak.prominence,
-                    color    = Color(0xFFCCD6E0),
-                    fontSize = 11.sp,
-                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                InfoChip(
-                    label = "Elevation",
-                    value = formatElevation(peak.elevM, useMiles),
-                    color = Color(0xFFEBEFF7)
-                )
-                InfoChip(
-                    label = "Coords",
-                    value = "${String.format("%.1f", peak.lat)}°, ${String.format("%.1f", peak.lon)}°",
-                    color = ElectricBlue
-                )
-            }
-        }
-    }
-}
-
-/** White ▲ triangle on a dark backing — visually rhymes with on-globe markers. */
-@Composable
-fun PeakBadgeLarge() {
-    Box(
-        modifier = Modifier
-            .size(52.dp)
-            .clip(CircleShape)
-            .background(Color(0xFF0D1018)),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text       = "▲",
-            color      = Color(0xFFEBEFF7),
-            fontWeight = FontWeight.Bold,
-            fontSize   = 26.sp
-        )
-    }
-}
-
 // ── Selected volcano card ──────────────────────────────────────────────────
 //
 // Same shape and rhythm as SelectedEarthquakeCard so the bottom-sheet
@@ -1063,6 +956,7 @@ fun PeakBadgeLarge() {
 @Composable
 fun SelectedVolcanoCard(
     volcano: com.quakesphere.globe.Volcano,
+    activity: com.quakesphere.domain.model.VolcanoActivity?,
     useMiles: Boolean,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -1084,8 +978,8 @@ fun SelectedVolcanoCard(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text          = "VOLCANO",
-                            color         = Color(0xFFFF7733),
+                            text          = if (activity != null) "ACTIVE NOW" else "VOLCANO",
+                            color         = if (activity != null) Color(0xFFFF6644) else Color(0xFFFF7733),
                             fontSize      = 10.sp,
                             fontWeight    = FontWeight.Bold,
                             letterSpacing = 1.5.sp
@@ -1112,6 +1006,23 @@ fun SelectedVolcanoCard(
                     modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
                 )
             }
+            activity?.let { act ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text     = "Smithsonian GVP · ${formatTimeAgo(act.publishedAt)}",
+                    color    = Color(0xFFFFB07A),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.0.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text     = act.summary,
+                    color    = TextPrimary,
+                    fontSize = 12.sp,
+                    maxLines = 6
+                )
+            }
             Spacer(Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1122,9 +1033,6 @@ fun SelectedVolcanoCard(
                     value = formatElevation(volcano.elevM, useMiles),
                     color = Color(0xFFFF7733)
                 )
-                volcano.lastEruption?.let { yr ->
-                    InfoChip(label = "Last erupted", value = yr, color = MagStrong)
-                }
                 if (volcano.type.isNotBlank()) {
                     InfoChip(
                         label = "Type",

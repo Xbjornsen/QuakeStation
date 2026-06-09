@@ -1,16 +1,13 @@
 package com.quakesphere.globe
 
 /**
- * Public data type for a mountain-peak marker on the globe.
- *
- * Hand-curated set of ~60 globally significant peaks: the Seven Summits,
- * all 14 eight-thousanders, plus iconic peaks across each continent.
- * See res/raw/peaks.json for the source notes and full list.
- *
- * Position on the globe is derived from [lat]/[lon] inside the renderer;
- * consumers don't need to know about the sphere mesh.
+ * Bundled list of major peaks — internal-only as of the v0.1.9 rework.
+ * The user-facing "peak markers" layer was removed (read too icon-like),
+ * but the data file is still loaded by [com.quakesphere.globe.internal.PeaksLoader]
+ * and consumed by [com.quakesphere.globe.internal.ElevationGenerator] to
+ * drive the Topographic Relief displacement.
  */
-data class Peak(
+internal data class Peak(
     val name: String,
     /** Mountain range (e.g. "Himalayas", "Andes"). May be blank. */
     val range: String,

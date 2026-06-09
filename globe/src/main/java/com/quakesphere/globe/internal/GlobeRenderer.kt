@@ -130,9 +130,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var volcanoes: List<com.quakesphere.globe.Volcano> = emptyList()
     @Volatile var volcanoPositions: List<FloatArray> = emptyList()
 
-    // ── Peaks (bundled set of major peaks; flat white triangle markers) ──────
-    @Volatile var peaks: List<com.quakesphere.globe.Peak> = emptyList()
-    @Volatile var peakPositions: List<FloatArray> = emptyList()
 
     // ── Settings ─────────────────────────────────────────────────────────────
     @Volatile var showContinentLines = true
@@ -142,7 +139,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     @Volatile var showHistoricTrends = false
     @Volatile var showEquator        = false
     @Volatile var showVolcanoes      = false
-    @Volatile var showPeaks          = false
     @Volatile var showTopography     = false
 
     // ── Interaction tracking (used to pause auto-rotate after touches) ───────
@@ -153,7 +149,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
     var onMarkerTapped:  ((Marker) -> Unit)? = null
     var onStackTapped:   ((MarkerStack) -> Unit)? = null
     var onVolcanoTapped: ((com.quakesphere.globe.Volcano) -> Unit)? = null
-    var onPeakTapped:    ((com.quakesphere.globe.Peak) -> Unit)? = null
 
     // ── Viewport ─────────────────────────────────────────────────────────────
     private var viewportWidth  = 1
@@ -473,7 +468,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         // With 500+ markers visible the tiny triangles get painted over
         // otherwise and become invisible.
         if (showVolcanoes)      drawVolcanoes()
-        if (showPeaks)          drawPeaks()
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1012,79 +1006,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         GLES20.glDisableVertexAttribArray(posH)
     }
 
-    /**
-     * Draw each peak as a small camera-facing filled triangle in cool white
-     * with a dark edge. Distinct from volcano cones (filled orange 3D) by
-     * colour + flat geometry — both are mountains but at a glance you can
-     * tell which is which.
-     *
-     * Implementation mirrors the original flat-triangle volcano draw before
-     * we upgraded to cones — billboards always face the camera so they read
-     * as triangles from every angle. Far-side peaks are occluded by the
-     * sphere's depth buffer; no explicit cull needed.
-     */
-    private fun drawPeaks() {
-        val positions = peakPositions
-        if (positions.isEmpty()) return
-
-        val right = floatArrayOf(mvMatrix[0], mvMatrix[4], mvMatrix[8])
-        val up    = floatArrayOf(mvMatrix[1], mvMatrix[5], mvMatrix[9])
-        val size  = 0.040f   // smaller than volcanoes (0.060)
-
-        val fillVerts = ArrayList<Float>(positions.size * 9)
-        val edgeVerts = ArrayList<Float>(positions.size * 18)
-        for (pos in positions) {
-            val tx = pos[0] + up[0] * size
-            val ty = pos[1] + up[1] * size
-            val tz = pos[2] + up[2] * size
-            val blx = pos[0] + (-right[0] - up[0] * 0.5f) * size
-            val bly = pos[1] + (-right[1] - up[1] * 0.5f) * size
-            val blz = pos[2] + (-right[2] - up[2] * 0.5f) * size
-            val brx = pos[0] + ( right[0] - up[0] * 0.5f) * size
-            val bry = pos[1] + ( right[1] - up[1] * 0.5f) * size
-            val brz = pos[2] + ( right[2] - up[2] * 0.5f) * size
-
-            fillVerts.add(tx); fillVerts.add(ty); fillVerts.add(tz)
-            fillVerts.add(blx); fillVerts.add(bly); fillVerts.add(blz)
-            fillVerts.add(brx); fillVerts.add(bry); fillVerts.add(brz)
-
-            edgeVerts.add(tx);  edgeVerts.add(ty);  edgeVerts.add(tz);  edgeVerts.add(brx); edgeVerts.add(bry); edgeVerts.add(brz)
-            edgeVerts.add(brx); edgeVerts.add(bry); edgeVerts.add(brz); edgeVerts.add(blx); edgeVerts.add(bly); edgeVerts.add(blz)
-            edgeVerts.add(blx); edgeVerts.add(bly); edgeVerts.add(blz); edgeVerts.add(tx);  edgeVerts.add(ty);  edgeVerts.add(tz)
-        }
-        if (fillVerts.isEmpty()) return
-
-        GLES20.glUseProgram(lineProgram)
-        val posH   = GLES20.glGetAttribLocation(lineProgram,  "aPosition")
-        val mvpH   = GLES20.glGetUniformLocation(lineProgram, "uMVPMatrix")
-        val colorH = GLES20.glGetUniformLocation(lineProgram, "uLineColor")
-        GLES20.glUniformMatrix4fv(mvpH, 1, false, mvpMatrix, 0)
-        GLES20.glEnable(GLES20.GL_BLEND)
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-
-        // Fill: cool blue-white (snowcap).
-        val fillArr = FloatArray(fillVerts.size).also { for (i in it.indices) it[i] = fillVerts[i] }
-        val fillBuf = ByteBuffer.allocateDirect(fillArr.size * 4)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer()
-            .apply { put(fillArr); position(0) }
-        GLES20.glUniform4f(colorH, 0.92f, 0.96f, 1.00f, 0.95f)
-        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, fillBuf)
-        GLES20.glEnableVertexAttribArray(posH)
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, fillArr.size / 3)
-
-        // Edge: dark slate for contrast.
-        val edgeArr = FloatArray(edgeVerts.size).also { for (i in it.indices) it[i] = edgeVerts[i] }
-        val edgeBuf = ByteBuffer.allocateDirect(edgeArr.size * 4)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer()
-            .apply { put(edgeArr); position(0) }
-        GLES20.glUniform4f(colorH, 0.05f, 0.10f, 0.18f, 0.95f)
-        GLES20.glVertexAttribPointer(posH, 3, GLES20.GL_FLOAT, false, 12, edgeBuf)
-        GLES20.glLineWidth(1.5f)
-        GLES20.glDrawArrays(GLES20.GL_LINES, 0, edgeArr.size / 3)
-
-        GLES20.glDisableVertexAttribArray(posH)
-    }
-
     private fun drawEquator() {
         GLES20.glUseProgram(lineProgram)
         val posH   = GLES20.glGetAttribLocation(lineProgram,  "aPosition")
@@ -1427,23 +1348,6 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
             if (stack != null) {
                 onStackTapped?.invoke(stack)
                 return null
-            }
-        }
-
-        // 1a. Peaks — visible-only, slightly smaller hit radius than volcanoes
-        // because the markers are smaller.
-        if (showPeaks && peakPositions.isNotEmpty()) {
-            var bestPeak = -1; var bestPeakDist = Float.MAX_VALUE
-            peakPositions.forEachIndexed { i, pos ->
-                val d = rayPointDistance(ro, rd, pos)
-                if (d < 0.06f && d < bestPeakDist) { bestPeakDist = d; bestPeak = i }
-            }
-            if (bestPeak >= 0) {
-                val p = peaks.getOrNull(bestPeak)
-                if (p != null) {
-                    onPeakTapped?.invoke(p)
-                    return null
-                }
             }
         }
 

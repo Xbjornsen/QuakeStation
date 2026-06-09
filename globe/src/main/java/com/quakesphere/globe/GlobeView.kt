@@ -51,11 +51,6 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
      */
     var onVolcanoClick: ((Volcano) -> Unit)? = null
 
-    /**
-     * Invoked on the main thread when the user taps a [Peak] marker (only
-     * fires when the peaks layer is enabled via [GlobeDisplaySettings.showPeaks]).
-     */
-    var onPeakClick: ((Peak) -> Unit)? = null
 
     // ── Public data setters ──────────────────────────────────────────────────
 
@@ -99,7 +94,6 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
             renderer.showHistoricTrends = value.showHistoricTrends
             renderer.showEquator        = value.showEquator
             renderer.showVolcanoes      = value.showVolcanoes
-            renderer.showPeaks          = value.showPeaks
             renderer.showTopography     = value.showTopography
         }
 
@@ -155,9 +149,6 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
      */
     val volcanoes: List<Volcano>
 
-    /** Public read-only list of bundled major peaks. Same lifetime / pattern as [volcanoes]. */
-    val peaks: List<Peak>
-    val peakCount: Int
 
     init {
         setEGLContextClientVersion(2)
@@ -175,14 +166,9 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
         volcanoes                 = list
         volcanoCount              = list.size
 
-        // Same pattern for peaks: synchronous load on the main thread before
-        // the GL surface exists. ~60 entries / ~5 KB JSON, no perceptible cost.
-        val peakEntries = com.quakesphere.globe.internal.PeaksLoader.load(context)
-        val peakList = peakEntries.map { it.peak }
-        renderer.peaks         = peakList
-        renderer.peakPositions = peakEntries.map { it.pos }
-        peaks                  = peakList
-        peakCount              = peakList.size
+        // Note: the bundled peaks JSON is still loaded internally by
+        // ElevationGenerator (it drives topographic displacement), but the
+        // user-facing "peak markers" layer was removed — too icon-like.
 
         // Forward stack taps from the GL thread up to the main thread, where
         // consumers' Compose / View state lives.
@@ -191,9 +177,6 @@ class GlobeView(context: Context) : GLSurfaceView(context) {
         }
         renderer.onVolcanoTapped = { volcano ->
             post { onVolcanoClick?.invoke(volcano) }
-        }
-        renderer.onPeakTapped = { peak ->
-            post { onPeakClick?.invoke(peak) }
         }
     }
 

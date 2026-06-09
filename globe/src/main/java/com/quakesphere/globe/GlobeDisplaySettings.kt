@@ -34,13 +34,6 @@ data class GlobeDisplaySettings(
      */
     val showVolcanoes:      Boolean = false,
     /**
-     * When true, show ~60 globally significant mountain peaks (Seven
-     * Summits, the eight-thousanders, plus iconic peaks per continent)
-     * as small white triangle markers. Tap to surface name / range /
-     * country / elevation.
-     */
-    val showPeaks:          Boolean = false,
-    /**
      * When true, displace the globe sphere and continent fills outward by
      * a per-vertex elevation derived from the bundled peaks list (Gaussian
      * splat, max 3% of globe radius at Everest). The Himalayas / Andes /
