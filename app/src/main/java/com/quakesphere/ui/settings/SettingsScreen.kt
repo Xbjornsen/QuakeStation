@@ -192,6 +192,13 @@ fun SettingsScreen(
                     onCheckedChange = { viewModel.setShowVolcanoes(it) }
                 )
                 HorizontalDivider(color = SurfaceVariant)
+                ToggleRow(
+                    title    = "Major Peaks",
+                    subtitle = "Seven Summits, the eight-thousanders, and iconic peaks per continent",
+                    checked  = s.showPeaks,
+                    onCheckedChange = { viewModel.setShowPeaks(it) }
+                )
+                HorizontalDivider(color = SurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 Text("Marker Colour Mode", color = TextPrimary, fontSize = 15.sp)
                 Text("What property drives dot colour", color = TextSecondary, fontSize = 12.sp)

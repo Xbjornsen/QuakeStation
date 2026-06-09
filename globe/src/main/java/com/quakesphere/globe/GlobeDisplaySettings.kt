@@ -32,5 +32,12 @@ data class GlobeDisplaySettings(
      * When true, show ~70 globally significant Holocene-active volcanoes
      * as small orange triangles. Tap to surface name / country / elevation.
      */
-    val showVolcanoes:      Boolean = false
+    val showVolcanoes:      Boolean = false,
+    /**
+     * When true, show ~60 globally significant mountain peaks (Seven
+     * Summits, the eight-thousanders, plus iconic peaks per continent)
+     * as small white triangle markers. Tap to surface name / range /
+     * country / elevation.
+     */
+    val showPeaks:          Boolean = false
 )

@@ -35,6 +35,7 @@ data class GlobeDisplaySettings(
     val showHistoricTrends:     Boolean = false,
     val showEquator:            Boolean = false,
     val showVolcanoes:          Boolean = false,
+    val showPeaks:              Boolean = false,
     val markerColorByMagnitude: Boolean = false,
     val useMiles:               Boolean = false
 )
@@ -45,6 +46,7 @@ data class GlobeUiState(
     val selectedEarthquake: Earthquake?        = null,
     val selectedSwarmId:    String?            = null,
     val selectedVolcano:    com.quakesphere.globe.Volcano? = null,
+    val selectedPeak:       com.quakesphere.globe.Peak? = null,
     val isLoading:       Boolean               = false,
     val errorMessage:    String?               = null,
     val minMagnitude:    Double                = 5.0,
@@ -85,6 +87,7 @@ class GlobeViewModel @Inject constructor(
         val KEY_SHOW_HISTORIC_TRENDS = booleanPreferencesKey("show_historic_trends")
         val KEY_SHOW_EQUATOR         = booleanPreferencesKey("show_equator")
         val KEY_SHOW_VOLCANOES       = booleanPreferencesKey("show_volcanoes")
+        val KEY_SHOW_PEAKS           = booleanPreferencesKey("show_peaks")
         val KEY_MARKER_COLOR_MODE    = stringPreferencesKey("marker_color_mode")
         val KEY_SWARM_MIN_EVENTS     = androidx.datastore.preferences.core.intPreferencesKey("swarm_min_events")
         val KEY_TIME_RANGE           = stringPreferencesKey("time_range")
@@ -134,6 +137,7 @@ class GlobeViewModel @Inject constructor(
                             showHistoricTrends     = prefs[KEY_SHOW_HISTORIC_TRENDS] ?: false,
                             showEquator            = prefs[KEY_SHOW_EQUATOR] ?: false,
                             showVolcanoes          = prefs[KEY_SHOW_VOLCANOES] ?: false,
+                            showPeaks              = prefs[KEY_SHOW_PEAKS] ?: false,
                             markerColorByMagnitude = (prefs[KEY_MARKER_COLOR_MODE] ?: "depth") == "magnitude",
                             useMiles               = (prefs[KEY_DISTANCE_UNIT] ?: "km") == "miles"
                         ),
@@ -209,6 +213,17 @@ class GlobeViewModel @Inject constructor(
     fun selectVolcano(volcano: com.quakesphere.globe.Volcano?) {
         _uiState.value = _uiState.value.copy(
             selectedVolcano    = volcano,
+            selectedPeak       = null,
+            selectedEarthquake = null,
+            selectedSwarmId    = null
+        )
+    }
+
+    /** Peak tap → show the peak bottom card. Same single-card rule. */
+    fun selectPeak(peak: com.quakesphere.globe.Peak?) {
+        _uiState.value = _uiState.value.copy(
+            selectedPeak       = peak,
+            selectedVolcano    = null,
             selectedEarthquake = null,
             selectedSwarmId    = null
         )

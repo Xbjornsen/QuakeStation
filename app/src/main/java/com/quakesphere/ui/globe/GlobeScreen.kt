@@ -117,6 +117,7 @@ fun GlobeScreen(
     // Full volcano list (used by the "recent volcano" pill). Captured once
     // at factory time — the bundled set doesn't change at runtime.
     var volcanoes by remember { mutableStateOf<List<com.quakesphere.globe.Volcano>>(emptyList()) }
+    var peakCount by remember { mutableStateOf(0) }
 
     // Replay: each time the index advances, fly the camera to that quake.
     LaunchedEffect(uiState.replay.isActive, uiState.replay.index) {
@@ -137,9 +138,11 @@ fun GlobeScreen(
                 GlobeView(context).apply {
                     volcanoCount = this.volcanoCount   // copy library-side count into Compose state
                     volcanoes    = this.volcanoes
+                    peakCount    = this.peakCount
                     onMarkerClick  = { marker -> viewModel.selectEarthquakeById(marker.id) }
                     onStackClick   = { stack  -> viewModel.selectSwarm(stack.id) }
                     onVolcanoClick = { v -> viewModel.selectVolcano(v) }
+                    onPeakClick    = { p -> viewModel.selectPeak(p) }
                     globeViewRef = this
                 }
             },
@@ -179,7 +182,8 @@ fun GlobeScreen(
                     showTectonicPlates = uiState.displaySettings.showTectonicPlates,
                     showHistoricTrends = uiState.displaySettings.showHistoricTrends,
                     showEquator        = uiState.displaySettings.showEquator,
-                    showVolcanoes      = uiState.displaySettings.showVolcanoes
+                    showVolcanoes      = uiState.displaySettings.showVolcanoes,
+                    showPeaks          = uiState.displaySettings.showPeaks
                 )
             },
             modifier = Modifier.fillMaxSize()
@@ -228,6 +232,16 @@ fun GlobeScreen(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1
+                            )
+                        }
+                        // Peaks count — same rule: only shown when layer is on.
+                        if (uiState.displaySettings.showPeaks && peakCount > 0) {
+                            Text(text = "·", color = TextSecondary, fontSize = 12.sp)
+                            Text(
+                                text = "$peakCount peak${if (peakCount > 1) "s" else ""}",
+                                color = Color(0xFFEBEFF7),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                         // Active volcano count — only shown when the layer is on
@@ -438,6 +452,23 @@ fun GlobeScreen(
                     onEventClick = { id -> viewModel.selectSwarm(null); viewModel.selectEarthquakeById(id) },
                     onDismiss = { viewModel.selectSwarm(null) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+        }
+
+        // ── Selected peak popup ──────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = uiState.selectedPeak != null,
+            enter   = slideInVertically(initialOffsetY = { it }),
+            exit    = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            uiState.selectedPeak?.let { p ->
+                SelectedPeakCard(
+                    peak      = p,
+                    useMiles  = uiState.displaySettings.useMiles,
+                    onDismiss = { viewModel.selectPeak(null) },
+                    modifier  = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
         }
@@ -914,6 +945,109 @@ fun LegendItem(color: Color, label: String) {
         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
         Text(text = label, color = TextPrimary, fontSize = 11.sp)
+    }
+}
+
+// ── Selected peak card ─────────────────────────────────────────────────────
+
+@Composable
+fun SelectedPeakCard(
+    peak: com.quakesphere.globe.Peak,
+    useMiles: Boolean,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier  = modifier.fillMaxWidth(),
+        colors    = CardDefaults.cardColors(containerColor = SurfaceCard),
+        shape     = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(8.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    PeakBadgeLarge()
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text          = "PEAK",
+                            color         = Color(0xFFEBEFF7),
+                            fontSize      = 10.sp,
+                            fontWeight    = FontWeight.Bold,
+                            letterSpacing = 1.5.sp
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text       = peak.name,
+                            color      = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize   = 15.sp,
+                            maxLines   = 2
+                        )
+                        Text(
+                            text     = if (peak.range.isNotBlank()) "${peak.range} · ${peak.country}" else peak.country,
+                            color    = TextSecondary,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
+                Text(
+                    text     = "✕",
+                    color    = TextSecondary,
+                    fontSize = 18.sp,
+                    modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
+                )
+            }
+            if (peak.prominence.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text     = peak.prominence,
+                    color    = Color(0xFFCCD6E0),
+                    fontSize = 11.sp,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                InfoChip(
+                    label = "Elevation",
+                    value = formatElevation(peak.elevM, useMiles),
+                    color = Color(0xFFEBEFF7)
+                )
+                InfoChip(
+                    label = "Coords",
+                    value = "${String.format("%.1f", peak.lat)}°, ${String.format("%.1f", peak.lon)}°",
+                    color = ElectricBlue
+                )
+            }
+        }
+    }
+}
+
+/** White ▲ triangle on a dark backing — visually rhymes with on-globe markers. */
+@Composable
+fun PeakBadgeLarge() {
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF0D1018)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text       = "▲",
+            color      = Color(0xFFEBEFF7),
+            fontWeight = FontWeight.Bold,
+            fontSize   = 26.sp
+        )
     }
 }
 
