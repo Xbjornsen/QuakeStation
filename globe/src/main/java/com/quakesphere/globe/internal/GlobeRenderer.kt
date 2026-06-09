@@ -306,7 +306,11 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
         varying vec2 vTexCoord;
         void main() {
             vTexCoord = aTexCoord;
-            gl_Position = uMVPMatrix * aPosition;
+            // Push the heatmap mesh fractionally outside the globe sphere
+            // (radius 1.005 vs 1.0). Without this every heatmap fragment has
+            // the same depth as the just-rendered globe and GL_LESS rejects
+            // 100% of them — net result: the layer never appeared.
+            gl_Position = uMVPMatrix * vec4(aPosition.xyz * 1.005, 1.0);
         }
     """.trimIndent()
 

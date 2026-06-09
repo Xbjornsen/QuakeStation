@@ -198,22 +198,27 @@ fun GlobeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Title block
-                Column {
+                // Title block — weighted so the action row always wins. Without
+                // weight(1f), a long subtitle ("537 quakes · 44 swarms ·
+                // 70 volcanoes") expands the title column wide enough to push
+                // the rightmost IconButton (settings) off-screen in portrait.
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
                         text = "QuakeStation",
                         color = TextPrimary,
                         fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "${uiState.earthquakes.size} quakes",
                             color = TextSecondary,
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
+                            maxLines = 1
                         )
                         if (uiState.swarms.isNotEmpty()) {
                             Text(text = "·", color = TextSecondary, fontSize = 12.sp)
@@ -221,7 +226,8 @@ fun GlobeScreen(
                                 text = "${uiState.swarms.size} swarm${if (uiState.swarms.size > 1) "s" else ""}",
                                 color = Color(0xFFFFBB33),
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
                             )
                         }
                         // Active volcano count — only shown when the layer is on
@@ -232,13 +238,15 @@ fun GlobeScreen(
                                 text = "$volcanoCount volcano${if (volcanoCount > 1) "es" else ""}",
                                 color = Color(0xFFFF7733),
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
                             )
                         }
                     }
                 }
 
-                // Action buttons
+                // Action buttons — tighter spacing so 4 buttons + optional
+                // progress indicator fit even on narrow phones (~360 dp wide).
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (uiState.isLoading) {
                         CircularProgressIndicator(
