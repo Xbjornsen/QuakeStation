@@ -78,7 +78,11 @@ class UpdateRepository @Inject constructor(
 
     private companion object {
         const val OWNER = "Xbjornsen"
-        const val REPO  = "QuakeSphere"
+        // Repo renamed from "QuakeSphere" → "QuakeStation" mid-2026.
+        // GitHub keeps the old name redirecting for a while, but baking
+        // the new one in means future updates survive even after the
+        // redirect expires.
+        const val REPO  = "QuakeStation"
     }
 }
 

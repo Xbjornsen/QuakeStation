@@ -10,8 +10,10 @@ globe.
 > phones from API 33 (Android 13) through API 34. Single-handed,
 > portrait-first UI; no tablet layout yet.
 >
-> _Repo still named `QuakeSphere` from before the rename — Gradle/package
-> identifiers will follow in a later commit._
+> _Gradle root project (`rootProject.name`), Kotlin package
+> (`com.quakesphere`), Application class (`QuakeSphereApp`) and theme
+> still use the original `QuakeSphere` identifiers — code-level rename
+> tracked separately._
 
 <p align="center">
   <img src="docs/screenshots/globe.png"     alt="Live globe — LATEST/BIGGEST quake pill"        width="32%" />
@@ -23,7 +25,7 @@ globe.
 The fastest way to get the latest build on a phone is the GitHub Releases
 page — every tagged version ships a signed APK ready to sideload:
 
-> **[→ Download the latest APK from Releases](https://github.com/Xbjornsen/QuakeSphere/releases/latest)**
+> **[→ Download the latest APK from Releases](https://github.com/Xbjornsen/QuakeStation/releases/latest)**
 
 After the first install the **in-app updater** takes over: on every
 launch the app checks GitHub for a newer release, surfaces a banner if

@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "QuakeSphere"
+rootProject.name = "QuakeStation"
 include(":app")
 include(":globe")
