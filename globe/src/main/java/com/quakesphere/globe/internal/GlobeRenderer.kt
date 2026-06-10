@@ -118,10 +118,11 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
      * smaller mountains form gentle bulges.
      */
     private var elevationGrid: FloatArray? = null
-    // 10% radius extension at maxElev. 3% was perceptually invisible at normal
-    // viewing distance — the user said toggling "does nothing". 10% reads as
-    // clearly bumpy mountains/ocean without warping the silhouette.
-    private val TOPO_EXAGGERATION = 0.10f
+    // 3% radius extension at maxElev. Subtle on the silhouette but enough to
+    // drive the snow-cap shading below — the fill shader recovers an elevation
+    // proxy from the post-displacement radial distance and mixes to white at
+    // the high cells, so snow does the visual heavy lifting, not the bulge.
+    private val TOPO_EXAGGERATION = 0.03f
 
     @Volatile var lastMvpMatrix: FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
 
@@ -306,6 +307,20 @@ internal class GlobeRenderer(private val appContext: android.content.Context) : 
             float sunDot  = dot(n, normalize(uSunDirModel));
             float diffuse = max(sunDot, 0.0);
             vec3 color = uFillColor.rgb * (0.25 + diffuse * 0.75);
+
+            // ── Snow-cap shading ───────────────────────────────────────────
+            // The continent fill mesh sits at base radius 1.0050. When the
+            // topography toggle is on, each vertex is multiplied by
+            // (1 + e × 0.03) where e ∈ [0,1] is the elevation-grid value, so
+            // the post-displacement length encodes elevation:
+            //     e = (length(vModelPos) / 1.0050 − 1) / 0.03
+            // When topography is OFF, length == 1.0050 exactly → e == 0 →
+            // no snow contribution. No uniform needed to gate it.
+            float elev = clamp((length(vModelPos) / 1.0050 - 1.0) / 0.03, 0.0, 1.0);
+            // Soft snowline: nothing below e=0.35, full snow by e=0.85.
+            float snow = smoothstep(0.35, 0.85, elev);
+            vec3 snowColor = vec3(0.96, 0.98, 1.00);
+            color = mix(color, snowColor, snow);
 
             // Real-time UTC night darkening — only deep night gets a subtle dim.
             float utcSunDot = dot(n, normalize(uUtcSunDirModel));
